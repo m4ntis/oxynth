@@ -5,7 +5,8 @@ use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::thread;
 
 pub struct Oscillator {
-    pub loudness: f32,
+    loudness: f32,
+    transpose: i32,
 
     sample_rate: u32,
 
@@ -13,7 +14,9 @@ pub struct Oscillator {
     pos: u32,
 
     samples: SyncSender<f32>,
+
     freqs: Receiver<u32>,
+    transpose_r: Receiver<i32>,
     quit: Receiver<bool>,
 }
 
@@ -21,26 +24,37 @@ impl Oscillator {
     pub fn new(
         loudness: f32,
         sample_rate: u32,
-    ) -> (Oscillator, Receiver<f32>, Sender<u32>, SyncSender<bool>) {
-        let (send_samples, recv_samples) = sync_channel::<f32>(10);
-        let (send_freqs, recv_freqs) = channel::<u32>();
+    ) -> (
+        Oscillator,
+        Receiver<f32>,
+        Sender<u32>,
+        Sender<i32>,
+        SyncSender<bool>,
+    ) {
+        let (samples_s, samples_r) = sync_channel::<f32>(10);
+        let (freqs_s, freqs_r) = channel::<u32>();
+        let (transpose_s, transpose_r) = channel::<i32>();
         let (quit_s, quit_r) = sync_channel::<bool>(0);
 
         (
             Oscillator {
                 loudness,
+                transpose: 0,
 
                 sample_rate,
 
                 wavelength: 0,
                 pos: 0,
 
-                samples: send_samples,
-                freqs: recv_freqs,
+                samples: samples_s,
+
+                freqs: freqs_r,
+                transpose_r,
                 quit: quit_r,
             },
-            recv_samples,
-            send_freqs,
+            samples_r,
+            freqs_s,
+            transpose_s,
             quit_s,
         )
     }
@@ -51,16 +65,33 @@ impl Oscillator {
                 return;
             }
 
+            if let Ok(transpose) = self.transpose_r.try_recv() {
+                self.transpose += transpose;
+                // TODO: Update on the spot or from next note?
+            }
+
             if let Ok(freq) = self.freqs.try_recv() {
-                if freq == 0 {
-                    self.wavelength = 0
-                } else {
-                    self.wavelength = self.sample_rate / freq * 2
-                }
+                self.set_wavelength(freq);
             }
 
             let sample = self.next();
             self.samples.send(sample).unwrap();
+        }
+    }
+
+    fn set_wavelength(&mut self, freq: u32) {
+        if freq == 0 {
+            self.wavelength = 0;
+        } else {
+            if self.transpose == 0 {
+                self.wavelength = self.sample_rate / freq * 2;
+                return;
+            }
+            if self.transpose < 0 {
+                self.wavelength = (self.sample_rate / freq * 2) * (2 * -self.transpose) as u32;
+            } else {
+                self.wavelength = (self.sample_rate / freq * 2) / (2 * self.transpose) as u32;
+            }
         }
     }
 
@@ -77,7 +108,7 @@ impl Oscillator {
             self.pos = 0;
         }
 
-        // Return 0 for a deactivated ooscillator
+        // Return 0 for a deactivated oscillator
         if self.wavelength == 0 {
             return 0.0;
         }
@@ -122,7 +153,7 @@ fn main() {
     let host = cpal::default_host();
     let (device, config) = setup_default_device(host);
 
-    let (mut osc, samples, freqs, quit) = Oscillator::new(0.05, config.sample_rate.0);
+    let (mut osc, samples, freqs, transpose, quit) = Oscillator::new(0.05, config.sample_rate.0);
     thread::spawn(move || osc.run());
 
     let stream = build_stream(device, &config, samples);
@@ -142,6 +173,13 @@ fn main() {
                     if let Button::Keyboard(key) = args.button {
                         match args.state {
                             ButtonState::Press => {
+                                if key == Key::NumPadPlus {
+                                    transpose.send(1).unwrap();
+                                }
+                                if key == Key::NumPadMinus {
+                                    transpose.send(-1).unwrap();
+                                }
+
                                 let freq = match_keys(key);
                                 if freq != 0 {
                                     freqs.send(freq).unwrap();
