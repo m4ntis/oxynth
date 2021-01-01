@@ -1,6 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Sample, StreamConfig};
-use rand::prelude::*;
 use std::io;
 
 fn main() {
@@ -15,14 +14,14 @@ fn main() {
         buffer_size: BufferSize::Default,
     };
 
+    let mut note = Oscilator::new(440, 0.05, config.sample_rate.0);
+
     let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut rng = rand::thread_rng();
-
                 for sample in data.iter_mut() {
-                    let val = rng.gen::<f32>() * 2.0 - 1.0;
+                    let val = note.next();
                     *sample = Sample::from(&val);
                 }
             },
@@ -35,4 +34,38 @@ fn main() {
     stream.play().unwrap();
 
     io::stdin().read_line(&mut String::new()).unwrap();
+}
+
+pub struct Oscilator {
+    wavelength: u32,
+    pos: u32,
+
+    loudness: f32,
+}
+
+impl Oscilator {
+    pub fn new(freq: u32, loudness: f32, rate: u32) -> Oscilator {
+        Oscilator {
+            wavelength: rate / freq,
+            pos: 0,
+            loudness,
+        }
+    }
+
+    pub fn next(&mut self) -> f32 {
+        self.calc_next() * self.loudness
+    }
+
+    fn calc_next(&mut self) -> f32 {
+        self.pos += 1;
+        if self.pos > self.wavelength {
+            self.pos = 0;
+        }
+
+        if self.pos < self.wavelength / 2 {
+            1.0
+        } else {
+            -1.0
+        }
+    }
 }
