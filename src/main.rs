@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Sample, StreamConfig};
-use oxynth::Oscillator;
+use oxynth::{Oscillator, OscillatorCmd};
 use piston_window::*;
 use std::sync::mpsc::Receiver;
 use std::thread;
@@ -36,8 +36,8 @@ fn main() {
     let host = cpal::default_host();
     let (device, config) = setup_default_device(host);
 
-    let (mut osc, samples, freqs, transpose, quit) = Oscillator::new(0.05, config.sample_rate.0);
-    thread::spawn(move || osc.run());
+    let (mut osc, samples, cmds) = Oscillator::new(0.05, config.sample_rate.0);
+    thread::spawn(move || osc.start());
 
     let stream = build_stream(device, &config, samples);
     stream.play().unwrap();
@@ -57,28 +57,28 @@ fn main() {
                         match args.state {
                             ButtonState::Press => {
                                 if key == Key::NumPadPlus {
-                                    transpose.send(1).unwrap();
+                                    cmds.send(OscillatorCmd::Transpose(1)).unwrap();
                                 }
                                 if key == Key::NumPadMinus {
-                                    transpose.send(-1).unwrap();
+                                    cmds.send(OscillatorCmd::Transpose(-1)).unwrap();
                                 }
 
                                 let freq = match_keys(key);
                                 if freq != 0 {
-                                    freqs.send(freq).unwrap();
+                                    cmds.send(OscillatorCmd::Activate(freq)).unwrap();
                                     last = key;
                                 }
                             }
                             ButtonState::Release => {
                                 if key == last {
-                                    freqs.send(0).unwrap();
+                                    cmds.send(OscillatorCmd::Deactivate).unwrap();
                                 }
                             }
                         }
                     }
                 }
                 Input::Close(_) => {
-                    quit.send(true).unwrap();
+                    cmds.send(OscillatorCmd::Stop).unwrap();
                 }
                 _ => {}
             },

@@ -1,5 +1,19 @@
-use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
+/// A command to control an Oscillator.
+pub enum OscillatorCmd {
+    /// Activate / change Oscillator frequency.
+    Activate(u32),
+    /// Deactivate Oscillator.
+    Deactivate,
+    /// Transpose Oscillator Up or Down by octaves.
+    Transpose(i32),
+    /// Stop cleanly stops the Oscillator. A stopped Oscillator needs to be re-started in order to
+    /// execute new commands.
+    Stop,
+}
+
+/// An Oscillator used for a single voice.
 pub struct Oscillator {
     loudness: f32,
     transpose: i32,
@@ -10,27 +24,20 @@ pub struct Oscillator {
     pos: u32,
 
     samples: SyncSender<f32>,
-
-    freqs: Receiver<u32>,
-    transpose_r: Receiver<i32>,
-    quit: Receiver<bool>,
+    cmds: Receiver<OscillatorCmd>,
 }
 
 impl Oscillator {
+    /// Creates a new Oscillator.
+    ///
+    /// new returns the Oscillator, as well as a samples receiver and an
+    /// OscillatorCmd sender.
     pub fn new(
         loudness: f32,
         sample_rate: u32,
-    ) -> (
-        Oscillator,
-        Receiver<f32>,
-        Sender<u32>,
-        Sender<i32>,
-        SyncSender<bool>,
-    ) {
+    ) -> (Oscillator, Receiver<f32>, SyncSender<OscillatorCmd>) {
         let (samples_s, samples_r) = sync_channel::<f32>(10);
-        let (freqs_s, freqs_r) = channel::<u32>();
-        let (transpose_s, transpose_r) = channel::<i32>();
-        let (quit_s, quit_r) = sync_channel::<bool>(0);
+        let (cmd_s, cmd_r) = sync_channel::<OscillatorCmd>(5);
 
         (
             Oscillator {
@@ -43,31 +50,36 @@ impl Oscillator {
                 pos: 0,
 
                 samples: samples_s,
-
-                freqs: freqs_r,
-                transpose_r,
-                quit: quit_r,
+                cmds: cmd_r,
             },
             samples_r,
-            freqs_s,
-            transpose_s,
-            quit_s,
+            cmd_s,
         )
     }
 
-    pub fn run(&mut self) {
+    /// Starts the Oscillator, should be called on it's own thread.
+    ///
+    /// The Oscillator will start publishing samples, and process incoming
+    /// commands.
+    pub fn start(&mut self) {
         loop {
-            if let Ok(_) = self.quit.try_recv() {
-                return;
-            }
-
-            if let Ok(transpose) = self.transpose_r.try_recv() {
-                self.transpose += transpose;
-                // TODO: Update on the spot or from next note?
-            }
-
-            if let Ok(freq) = self.freqs.try_recv() {
-                self.set_wavelength(freq);
+            if let Ok(cmd) = self.cmds.try_recv() {
+                match cmd {
+                    OscillatorCmd::Activate(freq) => {
+                        self.set_wavelength(freq);
+                    }
+                    OscillatorCmd::Deactivate => {
+                        self.set_wavelength(0);
+                    }
+                    OscillatorCmd::Transpose(transpose) => {
+                        // TODO: Update on the spot or from next note?
+                        self.transpose += transpose;
+                    }
+                    OscillatorCmd::Stop => {
+                        // TODO: Should consume rest of cmds?
+                        return;
+                    }
+                }
             }
 
             let sample = self.next();
