@@ -3,9 +3,12 @@ name = "oxynth"
 version = "0.1.0"
 authors = ["Mati Shabtay <matishabtay@gmail.com>"]
 edition = "2018"
+description = "A small software synth"
+license = "GPL-3.0"
+repository = "https://github.com/m4ntis/oxynth"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 cpal = "0.13.1"
-piston_window = "*"
+piston_window = "0.*"
